@@ -1,8 +1,10 @@
 import os
 import asyncio
+
 from IMA import run_ima_analysis_for_bot
 from ETF import run_etf_analysis_for_bot
 from CSA_bot_wrapper import run_csa_analysis_for_bot
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -20,9 +22,12 @@ from telegram.ext import (
 
 # ================== CONFIG ==================
 
-BOT_TOKEN = "8125634898:AAEGiT7nt_uTrG7NiJKDIVlmJqo8uRcHtIg"
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # 🔐 from Render env
+APP_URL = os.getenv("APP_URL")      # https://crypto-intelligence-1.onrender.com
 
-# Replace with your Telegram user ID(s)
+if not BOT_TOKEN or not APP_URL:
+    raise RuntimeError("BOT_TOKEN and APP_URL must be set as environment variables")
+
 ADMIN_IDS = [7252074303]
 
 GUIDE_FOLDER = "guides"
@@ -37,23 +42,24 @@ GUIDE_PATHS = {
 # ================== USER COMMANDS ==================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    first_name = update.message.from_user.first_name
+    first_name = update.effective_user.first_name
 
     reply_keyboard = [
-        ["/IMA__Analysis"], ["/ETF__Analysis"],
+        ["/IMA__Analysis"],
+        ["/ETF__Analysis"],
         ["/CSA__Analysis"],
-        ["📘 Guidance_Book"]
+        ["📘 Guidance_Book"],
     ]
 
     await update.message.reply_text(
         f"Welcome {first_name} 👋\n\n"
-        "This bot analyzes the live crypto market for you and creates clear reports "
+        "This bot analyzes the live crypto market and creates clear reports "
         "backed by signal evidence.\n\n"
-        "Tap Guidance Book button below to learn how to understand and use the reports.",
+        "Tap *Guidance Book* below to learn how to use the reports.",
+        parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(
             reply_keyboard,
             resize_keyboard=True,
-            one_time_keyboard=False
         ),
     )
 
@@ -92,8 +98,8 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================== ADMIN: GUIDE UPLOAD ==================
 
 async def guide_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ You are not authorized to do this.")
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ You are not authorized.")
         return
 
     keyboard = [
@@ -119,7 +125,7 @@ async def upload_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def receive_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS:
+    if update.effective_user.id not in ADMIN_IDS:
         return
 
     guide_key = context.user_data.get("uploading_guide")
@@ -129,31 +135,22 @@ async def receive_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = update.message.document
 
     if not document.file_name.lower().endswith(".pdf"):
-        await update.message.reply_text("❌ Please upload a valid PDF file.")
+        await update.message.reply_text("❌ Please upload a valid PDF.")
         return
 
     file = await document.get_file()
-    file_path = GUIDE_PATHS[guide_key]
+    await file.download_to_drive(GUIDE_PATHS[guide_key])
 
-    await file.download_to_drive(file_path)
-
-    context.user_data.pop("uploading_guide")
+    context.user_data.pop("uploading_guide", None)
 
     await update.message.reply_text(
         f"✅ {guide_key.upper()} Guide uploaded successfully!"
     )
 
+# ================== ANALYSIS ==================
+
 async def ima_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    # (Optional) Restrict to admins
-    # if update.message.from_user.id not in ADMIN_IDS:
-    #     await update.message.reply_text("❌ You are not authorized.")
-    #     return
-
-    await update.message.reply_text(
-        "🔍 Running IMA Analysis...\n"
-        "This may take 1–2 minutes ⏳"
-    )
+    await update.message.reply_text("🔍 Running IMA Analysis...\n⏳ Please wait")
 
     loop = asyncio.get_running_loop()
 
@@ -162,32 +159,17 @@ async def ima_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
             None, run_ima_analysis_for_bot
         )
 
-        # Send summary (Markdown enabled)
-        await update.message.reply_text(
-            summary,
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(summary, parse_mode="Markdown")
 
-        # Send Excel report
         if report_path and os.path.exists(report_path):
             with open(report_path, "rb") as f:
-                await context.bot.send_document(
-                    chat_id=update.message.chat_id,
-                    document=f,
-                    filename=report_path,
-                )
+                await context.bot.send_document(update.effective_chat.id, f)
 
     except Exception as e:
-        await update.message.reply_text(
-            f"❌ IMA Analysis failed:\n{str(e)}"
-        )
+        await update.message.reply_text(f"❌ IMA failed:\n{e}")
 
 async def etf_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    await update.message.reply_text(
-        "🔍 Running ETF Analysis...\n"
-        "This may take 1–2 minutes ⏳"
-    )
+    await update.message.reply_text("🔍 Running ETF Analysis...\n⏳ Please wait")
 
     loop = asyncio.get_running_loop()
 
@@ -196,63 +178,41 @@ async def etf_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
             None, run_etf_analysis_for_bot
         )
 
-        # Send summary
-        await update.message.reply_text(
-            summary,
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(summary, parse_mode="Markdown")
 
-        # Send Excel report
         if report_path and os.path.exists(report_path):
             with open(report_path, "rb") as f:
-                await context.bot.send_document(
-                    chat_id=update.message.chat_id,
-                    document=f,
-                    filename=os.path.basename(report_path),
-                )
+                await context.bot.send_document(update.effective_chat.id, f)
 
     except Exception as e:
-        await update.message.reply_text(
-            f"❌ ETF Analysis failed:\n{str(e)}"
-        )
+        await update.message.reply_text(f"❌ ETF failed:\n{e}")
 
 async def csa_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Run CSA analysis for user-provided pairs.
-    """
     if not context.args:
-        await update.message.reply_text("Kindly send the pairs you want this engine to analyze.:\n Example:\n/CSA__Analysis BTC-USD ETH-USD")
+        await update.message.reply_text(
+            "Example:\n/CSA__Analysis BTC-USD ETH-USD"
+        )
         return
 
-    pairs = context.args
-    await update.message.reply_text(
-        "🔍 Running CSA Analysis...\nThis may take 1–3 minutes ⏳"
-    )
+    await update.message.reply_text("🔍 Running CSA Analysis...\n⏳ Please wait")
 
-    import asyncio
     loop = asyncio.get_running_loop()
 
     try:
         summary, report_path = await loop.run_in_executor(
-            None, run_csa_analysis_for_bot, pairs
+            None, run_csa_analysis_for_bot, context.args
         )
 
-        # Send summary
         await update.message.reply_text(summary)
 
-        # Send Excel report
         if report_path and os.path.exists(report_path):
             with open(report_path, "rb") as f:
-                await context.bot.send_document(
-                    chat_id=update.message.chat_id,
-                    document=f,
-                    filename=report_path,
-                )
+                await context.bot.send_document(update.effective_chat.id, f)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ CSA Analysis failed:\n{str(e)}")
+        await update.message.reply_text(f"❌ CSA failed:\n{e}")
 
-# ================== MAIN ==================
+# ================== MAIN (WEBHOOK) ==================
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -266,20 +226,24 @@ def main():
 
     # Admin
     app.add_handler(CommandHandler("guide_upload", guide_upload))
-    app.add_handler(
-        CallbackQueryHandler(upload_select, pattern="^upload_")
-    )
-    app.add_handler(
-        MessageHandler(filters.Document.PDF, receive_pdf)
-    )
+    app.add_handler(CallbackQueryHandler(upload_select, pattern="^upload_"))
+    app.add_handler(MessageHandler(filters.Document.PDF, receive_pdf))
 
     # Shared
-    app.add_handler(
-        CallbackQueryHandler(send_guide, pattern="^guide_")
-    )
+    app.add_handler(CallbackQueryHandler(send_guide, pattern="^guide_"))
 
-    print("Bot is running...")
-    app.run_polling()
+    port = int(os.getenv("PORT", "10000"))
+    webhook_path = f"/{BOT_TOKEN}"
+    webhook_url = f"{APP_URL}{webhook_path}"
+
+    print("🚀 Starting webhook:", webhook_url)
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=webhook_url,
+        webhook_path=webhook_path,
+    )
 
 if __name__ == "__main__":
     main()
